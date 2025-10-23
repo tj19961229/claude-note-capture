@@ -163,8 +163,8 @@ def main():
         cwd = hook_data.get('cwd', '')
 
         if not claude_session_id:
-            log_message("Missing session_id in hook data", "ERROR")
-            sys.exit(1)
+            log_message("Missing session_id in hook data, skipping", "WARNING")
+            return  # Don't block operation
 
         if tool_name != 'Bash':
             log_message(f"Unexpected tool_name: {tool_name} (expected 'Bash')", "WARNING")
@@ -182,20 +182,27 @@ def main():
         # 4. Launch background processor (< 50ms)
         launch_background_processor()
 
-        # 5. Return immediately with exit code 0 (non-blocking)
+        # 5. Return successfully (non-blocking)
         log_message("✅ PostToolUse hook completed (async, non-blocking)")
-        sys.exit(0)
 
     except json.JSONDecodeError as e:
-        log_message(f"Failed to parse hook data: {e}", "ERROR")
-        sys.exit(1)
+        log_message(f"Failed to parse hook data: {e} (non-blocking)", "ERROR")
+        # Don't block operation, just log the error
+        return
 
     except Exception as e:
-        log_message(f"Unexpected error: {e}", "ERROR")
+        log_message(f"Unexpected error: {e} (non-blocking)", "ERROR")
         import traceback
         log_message(f"Traceback: {traceback.format_exc()}", "ERROR")
-        sys.exit(1)
+        # Don't block operation, just log the error
+        return
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+        sys.exit(0)  # Always return success
+    except Exception as e:
+        # Last resort: even if main() crashes, don't block operation
+        print(f"Hook error (non-blocking): {e}", file=sys.stderr)
+        sys.exit(0)  # Return 0 to not block operation

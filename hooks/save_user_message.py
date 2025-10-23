@@ -91,7 +91,7 @@ def launch_background_processor():
 
 
 def main():
-    """Main entry point for UserPromptSubmit hook (non-blocking)."""
+    """Main entry point for UserPromptSubmit hook (non-blocking, fail-safe)."""
     log_message("=" * 80)
     log_message("UserPromptSubmit Hook Triggered (Async Mode)!")
 
@@ -109,8 +109,8 @@ def main():
         cwd = hook_data.get('cwd', '')
 
         if not claude_session_id:
-            log_message("Missing session_id in hook data", "ERROR")
-            sys.exit(1)
+            log_message("Missing session_id in hook data, skipping", "WARNING")
+            return  # Don't block operation
 
         if not user_prompt:
             log_message("Empty user prompt, skipping", "WARNING")
@@ -130,15 +130,23 @@ def main():
         log_message("✅ UserPromptSubmit hook completed (async, non-blocking)")
 
     except json.JSONDecodeError as e:
-        log_message(f"Failed to parse hook data: {e}", "ERROR")
-        sys.exit(1)
+        log_message(f"Failed to parse hook data: {e} (non-blocking)", "ERROR")
+        # Don't block operation, just log the error
+        return
 
     except Exception as e:
-        log_message(f"Unexpected error: {e}", "ERROR")
+        log_message(f"Unexpected error: {e} (non-blocking)", "ERROR")
         import traceback
         log_message(f"Traceback: {traceback.format_exc()}", "ERROR")
-        sys.exit(1)
+        # Don't block operation, just log the error
+        return
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+        sys.exit(0)  # Always return success
+    except Exception as e:
+        # Last resort: even if main() crashes, don't block operation
+        print(f"Hook error (non-blocking): {e}", file=sys.stderr)
+        sys.exit(0)  # Return 0 to not block operation
