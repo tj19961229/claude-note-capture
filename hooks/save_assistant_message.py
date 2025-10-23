@@ -225,6 +225,29 @@ def main():
         stdin_data = sys.stdin.read()
         log_message(f"Received stdin data ({len(stdin_data)} bytes)")
 
+        # 🔍 DEBUG: Capture actual hook data for diagnosis
+        try:
+            debug_file = get_plugin_data_dir() / "debug_stop.json"
+            debug_data = {
+                "timestamp": datetime.now().isoformat(),
+                "stdin_raw": stdin_data,
+                "stdin_length": len(stdin_data),
+                "env_vars": {
+                    "PLUGIN_DIR": os.environ.get("PLUGIN_DIR", "NOT_SET"),
+                    "PWD": os.environ.get("PWD", "NOT_SET")
+                },
+                "python_info": {
+                    "version": sys.version,
+                    "executable": sys.executable
+                },
+                "cwd": os.getcwd()
+            }
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                json.dump(debug_data, f, indent=2, ensure_ascii=False)
+            log_message(f"🔍 DEBUG: Captured Stop hook data to {debug_file}")
+        except Exception as debug_err:
+            log_message(f"🔍 DEBUG: Failed to capture debug data: {debug_err}", "WARNING")
+
         hook_data = json.loads(stdin_data)
         log_message("Successfully parsed hook data as JSON")
 
