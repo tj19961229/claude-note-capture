@@ -1,11 +1,10 @@
 {
   "name": "claude-note-capture",
   "description": "Capture Claude Code sessions and sync to knowledge management system. Auto-saves user messages, assistant responses, tool calls, and bash execution results to backend API with async queue processing.",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "author": {
     "name": "tj"
   },
-  "hooks": ["./hooks/hooks.json"],
   "repository": "https://github.com/tj19961229/claude-note-capture",
   "keywords": [
     "session-capture",
