@@ -1,22 +1,23 @@
 {
-  "name": "Claude Note Capture Marketplace",
-  "description": "Session capture and knowledge management plugin for Claude Code. Automatically captures and syncs your Claude Code sessions to a backend API.",
-  "author": {
+  "name": "claude-note-capture-marketplace",
+  "owner": {
     "name": "tj",
-    "url": "https://github.com/tj19961229"
+    "email": "571995483@qq.com"
   },
   "plugins": [
     {
       "name": "claude-note-capture",
+      "source": ".",
       "description": "Capture Claude Code sessions and sync to knowledge management system. Auto-saves user messages, assistant responses, tool calls, and bash execution results to backend API with async queue processing.",
       "version": "1.0.0",
-      "path": ".",
+      "author": "tj",
       "keywords": [
         "session-capture",
         "knowledge-management",
         "hooks",
         "async-processing"
-      ]
+      ],
+      "category": "productivity"
     }
   ]
 }
