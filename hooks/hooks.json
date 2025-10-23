@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $PLUGIN_DIR/hooks/save_user_message.py",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/save_user_message.py",
             "description": "Capture user message and queue for async API sync"
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $PLUGIN_DIR/hooks/save_assistant_message.py",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/save_assistant_message.py",
             "description": "Capture assistant message with tool calls and queue for async API sync"
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $PLUGIN_DIR/hooks/save_tool_call_attempt.py",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/save_tool_call_attempt.py",
             "description": "Capture tool call attempt for high-level workflow tracking"
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $PLUGIN_DIR/hooks/save_bash_result.py",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/save_bash_result.py",
             "description": "Capture Bash command execution results with stdout/stderr"
           }
         ]

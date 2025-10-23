@@ -1,7 +1,7 @@
 {
   "name": "claude-note-capture",
   "description": "Capture Claude Code sessions and sync to knowledge management system. Auto-saves user messages, assistant responses, tool calls, and bash execution results to backend API with async queue processing.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "author": {
     "name": "tj"
   },
