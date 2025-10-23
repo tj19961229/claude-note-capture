@@ -19,11 +19,14 @@ A Claude Code plugin that captures user messages, assistant responses, tool call
 
 ## 📦 Installation
 
-### Option 1: Install from Git Repository (Recommended)
+### Option 1: Install from Marketplace (Recommended)
 
 ```bash
-# Install directly from GitHub
-/plugin install https://github.com/your-username/claude-note-capture
+# Add the plugin marketplace
+/plugin marketplace add tj19961229/claude-note-capture
+
+# Install the plugin
+/plugin install claude-note-capture
 
 # Configure your API endpoint
 mkdir -p ~/.claude/plugins/claude-note-capture
@@ -34,16 +37,19 @@ cp ~/.claude/plugins/claude-note-capture/config/config.json.example \
 nano ~/.claude/plugins/claude-note-capture/config.json
 ```
 
-### Option 2: Install from Plugin Marketplace
+### Option 2: Local Installation (Simplest for Testing)
 
 ```bash
-# Add the marketplace (if you have one)
-/plugin marketplace add your-github/claude-note-marketplace
+# Clone or download the repository, then copy to plugins folder
+cp -r claude-note-capture ~/.claude/plugins/
 
-# Install the plugin
-/plugin install claude-note-capture
+# Configure API endpoint
+cp ~/.claude/plugins/claude-note-capture/config/config.json.example \
+   ~/.claude/plugins/claude-note-capture/config.json
+nano ~/.claude/plugins/claude-note-capture/config.json
 
-# Configure as above
+# Verify installation
+/plugin list
 ```
 
 ### Option 3: Local Development Installation
