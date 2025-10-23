@@ -25,11 +25,31 @@ from typing import Optional, Dict, Any
 def get_plugin_data_dir() -> Path:
     """Get the plugin data directory for storing runtime files.
 
+    Auto-detects whether plugin is installed via marketplace or directly,
+    and returns the appropriate data directory.
+
     Returns:
         Path to plugin data directory (creates if doesn't exist)
     """
-    # Use Claude Code's standard plugin data location
-    data_dir = Path.home() / ".claude" / "plugins" / "claude-note-capture" / "data"
+    # Detect installation type by checking current file path
+    current_file = Path(__file__).resolve()
+
+    # Check if installed via marketplace (path contains 'marketplaces')
+    if "marketplaces" in current_file.parts:
+        # Extract marketplace name from path
+        # Path format: ~/.claude/plugins/marketplaces/{marketplace-name}/hooks/...
+        parts = current_file.parts
+        try:
+            idx = parts.index("marketplaces")
+            marketplace_name = parts[idx + 1]
+            data_dir = Path.home() / ".claude" / "plugins" / "marketplaces" / marketplace_name / "data"
+        except (ValueError, IndexError):
+            # Fallback if path structure is unexpected
+            data_dir = Path.home() / ".claude" / "plugins" / "claude-note-capture" / "data"
+    else:
+        # Direct installation (not via marketplace)
+        data_dir = Path.home() / ".claude" / "plugins" / "claude-note-capture" / "data"
+
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 
