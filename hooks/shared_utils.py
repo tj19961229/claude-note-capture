@@ -258,7 +258,7 @@ def save_to_failed_queue(message_data: Dict[str, Any]):
         })
     """
     try:
-        with open(QUEUE_FILE, 'a', encoding='utf-8') as f:
+        with open(FAILED_QUEUE_FILE, 'a', encoding='utf-8') as f:
             f.write(json.dumps(message_data) + '\n')
         log_message(
             f"Saved failed message to queue (session: {message_data['session_id']})"
