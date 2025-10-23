@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Runtime data files (should not be committed)
+data/
+*.jsonl
+*.log
+*.lock
+
+# Config files (user-specific, use config.json.example instead)
+config/config.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+test_data/
+*.test.py

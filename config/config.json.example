@@ -1,0 +1,6 @@
+{
+  "api_base_url": "http://localhost:8000/api/v1",
+  "max_retry_count": 10,
+  "request_timeout": 10,
+  "processing_timeout_minutes": 5
+}
