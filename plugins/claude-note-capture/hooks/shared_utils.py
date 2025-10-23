@@ -71,7 +71,8 @@ def load_config() -> Dict[str, Any]:
             "api_base_url": "http://localhost:8000/api/v1",
             "max_retry_count": 10,
             "request_timeout": 10,
-            "processing_timeout_minutes": 5
+            "processing_timeout_minutes": 5,
+            "debug_mode": false
         }
     """
     # Default configuration
@@ -79,7 +80,8 @@ def load_config() -> Dict[str, Any]:
         "api_base_url": "http://localhost:8000/api/v1",
         "max_retry_count": 10,
         "request_timeout": 10,
-        "processing_timeout_minutes": 5
+        "processing_timeout_minutes": 5,
+        "debug_mode": False  # Default: disable debug mode in production
     }
 
     config = default_config.copy()
@@ -157,7 +159,7 @@ def call_api_with_retry(
     json_data: Optional[Dict[str, Any]] = None,
     max_retries: int = 3,
     timeout: Optional[int] = None
-) -> tuple[bool, Optional[Dict[str, Any]]]:
+) -> tuple[bool, Optional[Dict[str, Any]], int]:
     """Call API with exponential backoff retry.
 
     Args:
@@ -168,16 +170,18 @@ def call_api_with_retry(
         timeout: Request timeout in seconds
 
     Returns:
-        Tuple of (success: bool, response_data: dict or None)
+        Tuple of (success: bool, response_data: dict or None, status_code: int)
 
     Examples:
         # GET request
-        success, data = call_api_with_retry('GET', url)
+        success, data, status = call_api_with_retry('GET', url)
 
         # POST request
-        success, data = call_api_with_retry('POST', url, payload)
+        success, data, status = call_api_with_retry('POST', url, payload)
         if success:
             print(f"Created: {data['id']}")
+        elif status == 404:
+            print("Resource not found")
     """
     # Use configured timeout if not specified
     if timeout is None:
@@ -208,14 +212,14 @@ def call_api_with_retry(
                     f"Resource already exists (409), treating as success",
                     "INFO"
                 )
-                return True, response.json() if response.text else None
+                return True, response.json() if response.text else None, 409
 
             response.raise_for_status()
 
             # Success
             result_data = response.json() if response.text else None
             log_message(f"API call succeeded: {method} {url}")
-            return True, result_data
+            return True, result_data, response.status_code
 
         except requests.Timeout as e:
             log_message(
@@ -238,7 +242,7 @@ def call_api_with_retry(
                     f"API call failed with non-retryable error {status_code}: {e}",
                     "ERROR"
                 )
-                return False, None
+                return False, None, status_code
 
             log_message(
                 f"API call failed (attempt {attempt + 1}/{max_retries}): "
@@ -260,7 +264,7 @@ def call_api_with_retry(
 
     # All retries failed
     log_message(f"API call failed after {max_retries} attempts", "ERROR")
-    return False, None
+    return False, None, 0
 
 
 def save_to_failed_queue(message_data: Dict[str, Any]):
@@ -706,5 +710,73 @@ def ensure_project_exists(project_info: dict) -> bool:
         'path': project_info['project_path'],
         'metadata': {'source': project_info['source']}
     }
-    success, _ = call_api_with_retry('POST', url, payload)
+    success, _, _ = call_api_with_retry('POST', url, payload)
     return success
+
+
+# ============================================================================
+# Shared Hook Utilities
+# ============================================================================
+
+def is_debug_mode() -> bool:
+    """Check if debug mode is enabled.
+
+    Returns:
+        True if debug mode is enabled in configuration
+    """
+    return _CONFIG.get("debug_mode", False)
+
+
+def save_debug_data(debug_file: Path, debug_data: dict):
+    """Save debug data to file if debug mode is enabled.
+
+    Args:
+        debug_file: Path to debug file
+        debug_data: Debug data dictionary to save
+
+    Example:
+        save_debug_data(
+            get_plugin_data_dir() / "debug_hook.json",
+            {"timestamp": datetime.now().isoformat(), "data": hook_data}
+        )
+    """
+    if not is_debug_mode():
+        return  # Skip in production
+
+    try:
+        with open(debug_file, 'w', encoding='utf-8') as f:
+            json.dump(debug_data, f, indent=2, ensure_ascii=False)
+        log_message(f"DEBUG: Captured debug data to {debug_file}")
+    except Exception as e:
+        log_message(f"DEBUG: Failed to save debug data: {e}", "WARNING")
+
+
+def launch_background_processor(script_name: str = "queue_manager.py"):
+    """Launch detached background processor to handle the queue.
+
+    Uses subprocess.Popen with start_new_session=True to create a
+    completely independent process that survives parent exit.
+
+    Args:
+        script_name: Name of the processor script to launch (default: queue_manager.py)
+
+    Example:
+        launch_background_processor()  # Launch default queue_manager.py
+        launch_background_processor("custom_processor.py")  # Launch custom script
+    """
+    script_path = Path(__file__).parent / script_name
+
+    try:
+        # Launch detached process
+        import subprocess
+        subprocess.Popen(
+            ['python3', str(script_path)],
+            start_new_session=True,  # POSIX: detach from parent process
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL
+        )
+        log_message(f"Background processor launched: {script_name}")
+    except Exception as e:
+        log_message(f"Failed to launch background processor: {e}", "WARNING")
+        # Not fatal - message is already in queue, can be processed later

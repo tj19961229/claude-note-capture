@@ -34,86 +34,12 @@ from shared_utils import (
     release_lock,
     log_message,
     truncate_content,
+    ensure_project_exists,
+    get_project_info_from_hook,
 )
 
 
-def processor_log(message: str, level: str = "INFO"):
-    """Write log message to processor log file and stderr.
-
-    Args:
-        message: Log message content
-        level: Log level (INFO, WARNING, ERROR)
-    """
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_line = f"[{timestamp}] [{level}] {message}\n"
-
-    # Write to stderr
-    sys.stderr.write(log_line)
-    sys.stderr.flush()
-
-    # Write to processor log file
-    try:
-        with open(PROCESSOR_LOG_FILE, 'a', encoding='utf-8') as f:
-            f.write(log_line)
-    except Exception as e:
-        sys.stderr.write(f"Failed to write to processor log: {e}\n")
-
-
-def create_or_get_session(session_id: str, metadata: Dict[str, Any]) -> bool:
-    """Create session if it doesn't exist.
-
-    Args:
-        session_id: Claude Code session ID
-        metadata: Session metadata (cwd, project_name, etc.)
-
-    Returns:
-        True if session exists or was created successfully
-    """
-    processor_log(f"Checking if session exists: {session_id}")
-
-    # Step 1: Check if session already exists
-    get_success, _ = call_api_with_retry(
-        method='GET',
-        url=f"{API_BASE_URL}/sessions/{session_id}",
-        max_retries=1
-    )
-
-    if get_success:
-        processor_log(f"Session already exists: {session_id}")
-        return True
-
-    # Step 2: Session doesn't exist, create it
-    processor_log(f"Session not found, creating: {session_id}")
-
-    project_name = metadata.get('project_name', 'Unknown Project')
-    cwd = metadata.get('cwd', '')
-
-    session_payload = {
-        'id': session_id,
-        'project_context': f"{project_name} (Claude Code)",
-        'programming_language': 'Mixed',
-        'metadata': {
-            'source': 'claude_code',
-            'cwd': cwd,
-            'import_time': datetime.utcnow().isoformat()
-        }
-    }
-
-    create_success, _ = call_api_with_retry(
-        method='POST',
-        url=f"{API_BASE_URL}/sessions",
-        json_data=session_payload
-    )
-
-    if create_success:
-        processor_log(f"Session created successfully: {session_id}")
-    else:
-        processor_log(f"Failed to create session: {session_id}", "ERROR")
-
-    return create_success
-
-
-def save_message(session_id: str, message: Dict[str, str]) -> bool:
+def save_message(session_id: str, message: Dict[str, str]) -> tuple[bool, int]:
     """Save message to session via API.
 
     Args:
@@ -121,7 +47,7 @@ def save_message(session_id: str, message: Dict[str, str]) -> bool:
         message: Message dict with 'role' and 'content'
 
     Returns:
-        True if message was saved successfully
+        Tuple of (success: bool, status_code: int)
     """
     role = message.get('role')
     content = message.get('content', '')
@@ -134,12 +60,12 @@ def save_message(session_id: str, message: Dict[str, str]) -> bool:
         'content': truncated_content
     }
 
-    processor_log(
+    log_message(
         f"Saving {role} message to session {session_id} "
         f"(length: {len(content)}, truncated: {len(truncated_content)})"
     )
 
-    success, response = call_api_with_retry(
+    success, response, status_code = call_api_with_retry(
         method='POST',
         url=f"{API_BASE_URL}/sessions/{session_id}/messages",
         json_data=message_payload
@@ -147,15 +73,93 @@ def save_message(session_id: str, message: Dict[str, str]) -> bool:
 
     if success:
         seq_num = response.get('sequence_number', 'unknown') if response else 'unknown'
-        processor_log(f"Message saved successfully (seq={seq_num})")
+        log_message(f"Message saved successfully (seq={seq_num})")
     else:
-        processor_log(f"Failed to save message", "ERROR")
+        log_message(f"Failed to save message (status={status_code})", "ERROR")
 
-    return success
+    return success, status_code
+
+
+def create_session_fallback(session_id: str, metadata: Dict[str, Any]) -> bool:
+    """Create session as fallback when message creation fails with 404.
+
+    This function is only called when a message POST fails because the session
+    doesn't exist. It extracts the session creation logic as a fallback mechanism.
+
+    Args:
+        session_id: Claude Code session ID
+        metadata: Session metadata (cwd, project_name, project_id, etc.)
+
+    Returns:
+        True if session was created successfully
+    """
+    log_message(f"Creating session as fallback: {session_id}")
+
+    project_name = metadata.get('project_name', 'Unknown Project')
+    cwd = metadata.get('cwd', '')
+
+    # Extract or generate project_id
+    project_id = metadata.get('project_id', None)
+
+    # If metadata doesn't have project_id, try to generate it from cwd
+    if not project_id:
+        from shared_utils import get_project_info_from_hook
+        log_message("No project_id in metadata, generating from cwd", "WARNING")
+        hook_data = {
+            'cwd': cwd,
+            'transcript_path': metadata.get('transcript_path', '')
+        }
+        project_info = get_project_info_from_hook(hook_data)
+        project_id = project_info['project_id']
+        log_message(f"Generated project_id: {project_id}")
+
+    # Ensure project exists before creating session (defensive)
+    project_info = {
+        'project_id': project_id,
+        'project_name': project_name,
+        'project_path': cwd,
+        'source': 'queue_manager_fallback'
+    }
+
+    if not ensure_project_exists(project_info):
+        log_message(
+            f"Failed to ensure project exists for session {session_id}",
+            "WARNING"
+        )
+        # Continue anyway - project might already exist
+
+    session_payload = {
+        'id': session_id,
+        'project_id': project_id,  # REQUIRED field for backend API
+        'project_context': f"{project_name} (Claude Code)",
+        'programming_language': 'Mixed',
+        'metadata': {
+            'source': 'claude_code',
+            'cwd': cwd,
+            'import_time': datetime.utcnow().isoformat()
+        }
+    }
+
+    create_success, _, _ = call_api_with_retry(
+        method='POST',
+        url=f"{API_BASE_URL}/sessions",
+        json_data=session_payload
+    )
+
+    if create_success:
+        log_message(f"Session created successfully: {session_id}")
+    else:
+        log_message(f"Failed to create session: {session_id}", "ERROR")
+
+    return create_success
 
 
 def process_message(msg_data: Dict[str, Any]) -> bool:
-    """Process a single message from the queue.
+    """Process a single message from the queue using optimistic execution.
+
+    Optimistically tries to save the message first. If it fails with 404 (session
+    not found), creates the session and retries. This reduces API calls by 50%
+    in the normal case where SessionStart hook has already created the session.
 
     Args:
         msg_data: Message data from queue
@@ -169,35 +173,57 @@ def process_message(msg_data: Dict[str, Any]) -> bool:
     message = msg_data.get('message', {})
     metadata = msg_data.get('metadata', {})
 
-    processor_log(f"Processing message {msg_id} (type={msg_type})")
+    log_message(f"Processing message {msg_id} (type={msg_type})")
 
-    # Ensure session exists
-    if not create_or_get_session(session_id, metadata):
-        processor_log(f"Failed to create/get session, will retry later", "WARNING")
+    # Optimistic execution: try to save message directly
+    success, status_code = save_message(session_id, message)
+
+    if success:
+        # Success on first try - the common case!
+        log_message(f"✅ Successfully processed message {msg_id}")
+        return True
+
+    # Failed - check if it's because session doesn't exist
+    if status_code == 404:
+        log_message(f"Session {session_id} not found, creating as fallback")
+
+        # Create session as fallback
+        if not create_session_fallback(session_id, metadata):
+            log_message(f"Failed to create session fallback, will retry later", "WARNING")
+            return False
+
+        # Retry saving the message
+        log_message(f"Retrying message save after session creation")
+        success, status_code = save_message(session_id, message)
+
+        if success:
+            log_message(f"✅ Successfully processed message {msg_id} (after fallback)")
+            return True
+        else:
+            log_message(
+                f"Failed to save message even after session creation (status={status_code})",
+                "WARNING"
+            )
+            return False
+    else:
+        # Failed for other reasons (not 404)
+        log_message(f"Failed to save message (status={status_code}), will retry later", "WARNING")
         return False
-
-    # Save message
-    if not save_message(session_id, message):
-        processor_log(f"Failed to save message, will retry later", "WARNING")
-        return False
-
-    processor_log(f"✅ Successfully processed message {msg_id}")
-    return True
 
 
 def process_queue():
     """Process all messages in the pending queue."""
-    processor_log("=" * 80)
-    processor_log("Queue Processor Started")
+    log_message("=" * 80)
+    log_message("Queue Processor Started")
 
     # Read pending queue
     pending_messages = read_queue(PENDING_QUEUE_FILE)
 
     if not pending_messages:
-        processor_log("No pending messages to process")
+        log_message("No pending messages to process")
         return
 
-    processor_log(f"Found {len(pending_messages)} pending messages")
+    log_message(f"Found {len(pending_messages)} pending messages")
 
     processed_count = 0
     failed_count = 0
@@ -207,7 +233,7 @@ def process_queue():
         msg_id = msg_data.get('id', str(uuid.uuid4()))
         retry_count = msg_data.get('retry_count', 0)
 
-        processor_log(f"Processing message {msg_id} (retry_count={retry_count})")
+        log_message(f"Processing message {msg_id} (retry_count={retry_count})")
 
         # Move to processing queue
         move_message(
@@ -233,7 +259,7 @@ def process_queue():
 
             if retry_count >= MAX_RETRY_COUNT:
                 # Max retries reached, move to failed queue
-                processor_log(
+                log_message(
                     f"Message {msg_id} exceeded max retries ({MAX_RETRY_COUNT}), "
                     "moving to failed queue",
                     "ERROR"
@@ -251,7 +277,7 @@ def process_queue():
                 moved_to_failed += 1
             else:
                 # Move back to pending queue for retry
-                processor_log(
+                log_message(
                     f"Message {msg_id} failed, moving back to pending queue "
                     f"(retry_count={retry_count})"
                 )
@@ -266,7 +292,7 @@ def process_queue():
                 )
                 failed_count += 1
 
-    processor_log(
+    log_message(
         f"Queue processing completed: "
         f"{processed_count} processed, {failed_count} failed, "
         f"{moved_to_failed} moved to failed queue"
@@ -278,7 +304,7 @@ def main():
     try:
         # Try to acquire lock (don't wait)
         if not try_acquire_lock(LOCK_FILE, timeout=0):
-            processor_log(
+            log_message(
                 "Another processor instance is already running, exiting",
                 "INFO"
             )
@@ -292,9 +318,9 @@ def main():
             release_lock(LOCK_FILE)
 
     except Exception as e:
-        processor_log(f"Unexpected error: {e}", "ERROR")
+        log_message(f"Unexpected error: {e}", "ERROR")
         import traceback
-        processor_log(f"Traceback: {traceback.format_exc()}", "ERROR")
+        log_message(f"Traceback: {traceback.format_exc()}", "ERROR")
         sys.exit(1)
 
 

@@ -27,6 +27,7 @@ from shared_utils import (
     call_api_with_retry,
     get_project_info_from_hook,
     ensure_project_exists,
+    save_debug_data,
     API_BASE_URL,
     get_plugin_data_dir,
 )
@@ -55,7 +56,7 @@ def create_session(session_id: str, project_info: dict, hook_data: dict) -> bool
         }
     }
 
-    success, response_data = call_api_with_retry('POST', url, payload)
+    success, response_data, _ = call_api_with_retry('POST', url, payload)
 
     if success:
         log_message(
@@ -77,10 +78,10 @@ def main():
         stdin_data = sys.stdin.read()
         log_message(f"Received stdin data ({len(stdin_data)} bytes)")
 
-        # DEBUG: Capture actual hook data for diagnosis
-        try:
-            debug_file = get_plugin_data_dir() / "debug_session_start.json"
-            debug_data = {
+        # DEBUG: Capture actual hook data for diagnosis (controlled by config)
+        save_debug_data(
+            get_plugin_data_dir() / "debug_session_start.json",
+            {
                 "timestamp": datetime.now().isoformat(),
                 "stdin_raw": stdin_data,
                 "stdin_length": len(stdin_data),
@@ -90,11 +91,7 @@ def main():
                 },
                 "cwd": os.getcwd()
             }
-            with open(debug_file, 'w', encoding='utf-8') as f:
-                json.dump(debug_data, f, indent=2, ensure_ascii=False)
-            log_message(f"DEBUG: Captured SessionStart data to {debug_file}")
-        except Exception as debug_err:
-            log_message(f"DEBUG: Failed to capture debug data: {debug_err}", "WARNING")
+        )
 
         hook_data = json.loads(stdin_data)
         log_message("Successfully parsed hook data as JSON")

@@ -30,7 +30,8 @@ from shared_utils import (
     append_to_queue,
     get_plugin_data_dir,
     get_project_info_from_hook,
-    ensure_project_exists,
+    save_debug_data,
+    launch_background_processor,
     PENDING_QUEUE_FILE,
 )
 
@@ -51,11 +52,6 @@ def enqueue_bash_result(
     """
     # Extract project information
     project_info = get_project_info_from_hook(hook_data)
-
-    # Ensure project exists (non-blocking)
-    if not ensure_project_exists(project_info):
-        log_message("Failed to ensure project exists", "ERROR")
-        # Don't return, continue processing (non-blocking)
 
     # Extract command info
     command = tool_input.get('command', 'N/A')
@@ -98,12 +94,12 @@ def enqueue_bash_result(
         'id': str(uuid.uuid4()),
         'type': 'tool_execution_result',
         'session_id': claude_session_id,
-        'project_id': project_info['project_id'],
         'message': {
             'role': 'assistant',
             'content': truncate_content(full_content)
         },
         'metadata': {
+            'project_id': project_info['project_id'],  # Include project_id for queue_manager
             'project_name': project_info['project_name'],
             'project_path': project_info['project_path'],
             'cwd': hook_data.get('cwd', ''),
@@ -127,32 +123,9 @@ def enqueue_bash_result(
 
     log_message(
         f"Bash execution result queued for async processing (id={message_data['id']}, "
-        f"session={claude_session_id}, project={project_info['project_id']}, "
+        f"session={claude_session_id}, project={message_data['metadata']['project_id']}, "
         f"exit_code={exit_code})"
     )
-
-
-def launch_background_processor():
-    """Launch detached background processor to handle the queue.
-
-    Uses subprocess.Popen with start_new_session=True to create a
-    completely independent process that survives parent exit.
-    """
-    script_path = Path(__file__).parent / "queue_manager.py"
-
-    try:
-        # Launch detached process
-        subprocess.Popen(
-            ['python3', str(script_path)],
-            start_new_session=True,  # POSIX: detach from parent process
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL
-        )
-        log_message("Background processor launched")
-    except Exception as e:
-        log_message(f"Failed to launch background processor: {e}", "WARNING")
-        # Not fatal - message is already in queue, can be processed later
 
 
 def main():
@@ -165,21 +138,17 @@ def main():
         stdin_data = sys.stdin.read()
         log_message(f"Received stdin data ({len(stdin_data)} bytes)")
 
-        # 🔍 DEBUG: Capture actual hook data for diagnosis
-        try:
-            debug_file = get_plugin_data_dir() / "debug_post_tool_use.json"
-            debug_data = {
+        # DEBUG: Capture actual hook data for diagnosis (controlled by config)
+        save_debug_data(
+            get_plugin_data_dir() / "debug_post_tool_use.json",
+            {
                 "timestamp": datetime.now().isoformat(),
                 "stdin_raw": stdin_data,
                 "stdin_length": len(stdin_data),
                 "env_vars": {"PLUGIN_DIR": os.environ.get("PLUGIN_DIR", "NOT_SET")},
                 "cwd": os.getcwd()
             }
-            with open(debug_file, 'w', encoding='utf-8') as f:
-                json.dump(debug_data, f, indent=2, ensure_ascii=False)
-            log_message(f"🔍 DEBUG: Captured PostToolUse data to {debug_file}")
-        except Exception as debug_err:
-            log_message(f"🔍 DEBUG: Failed to capture debug data: {debug_err}", "WARNING")
+        )
 
         hook_data = json.loads(stdin_data)
         log_message("Successfully parsed hook data as JSON")
