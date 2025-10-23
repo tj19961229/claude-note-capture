@@ -5,11 +5,8 @@
   "author": {
     "name": "tj"
   },
-  "hooks": ["../hooks/hooks.json"],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/your-username/claude-note-capture"
-  },
+  "hooks": ["./hooks/hooks.json"],
+  "repository": "https://github.com/tj19961229/claude-note-capture",
   "keywords": [
     "session-capture",
     "knowledge-management",
