@@ -28,6 +28,8 @@ from shared_utils import (
     truncate_content,
     append_to_queue,
     get_plugin_data_dir,
+    get_project_info_from_hook,
+    ensure_project_exists,
     PENDING_QUEUE_FILE,
 )
 
@@ -122,16 +124,22 @@ def parse_last_assistant_message(transcript_path: Path) -> dict | None:
 def enqueue_assistant_message(
     claude_session_id: str,
     assistant_data: dict,
-    cwd: str
+    hook_data: dict
 ):
     """Enqueue assistant message for async processing.
 
     Args:
         claude_session_id: Claude Code session ID
         assistant_data: Dictionary containing 'text' and 'tool_calls'
-        cwd: Current working directory
+        hook_data: Full hook data for project extraction
     """
-    project_name = Path(cwd).name if cwd else 'Unknown Project'
+    # Extract project information
+    project_info = get_project_info_from_hook(hook_data)
+
+    # Ensure project exists (non-blocking)
+    if not ensure_project_exists(project_info):
+        log_message("Failed to ensure project exists", "ERROR")
+        # Don't return, continue processing (non-blocking)
 
     text_content = assistant_data.get('text', '')
     tool_calls = assistant_data.get('tool_calls', [])
@@ -170,13 +178,15 @@ def enqueue_assistant_message(
         'id': str(uuid.uuid4()),
         'type': 'assistant_message',
         'session_id': claude_session_id,
+        'project_id': project_info['project_id'],
         'message': {
             'role': 'assistant',
             'content': truncate_content(full_content)
         },
         'metadata': {
-            'project_name': project_name,
-            'cwd': cwd,
+            'project_name': project_info['project_name'],
+            'project_path': project_info['project_path'],
+            'cwd': hook_data.get('cwd', ''),
             'tool_calls': tool_calls  # Store full tool call data in metadata
         },
         'timestamp': datetime.utcnow().isoformat(),
@@ -189,8 +199,8 @@ def enqueue_assistant_message(
 
     log_message(
         f"Assistant message queued for async processing (id={message_data['id']}, "
-        f"session={claude_session_id}, text_length={len(text_content)}, "
-        f"tool_calls={len(tool_calls)})"
+        f"session={claude_session_id}, project={project_info['project_id']}, "
+        f"text_length={len(text_content)}, tool_calls={len(tool_calls)})"
     )
 
 
@@ -286,7 +296,7 @@ def main():
                 log_message(f"  - {tool_call.get('tool', 'unknown')}")
 
         # 4. Enqueue message (< 10ms)
-        enqueue_assistant_message(claude_session_id, assistant_data, cwd)
+        enqueue_assistant_message(claude_session_id, assistant_data, hook_data)
 
         # 5. Launch background processor (< 30ms)
         launch_background_processor()

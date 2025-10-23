@@ -29,6 +29,8 @@ from shared_utils import (
     truncate_content,
     append_to_queue,
     get_plugin_data_dir,
+    get_project_info_from_hook,
+    ensure_project_exists,
     PENDING_QUEUE_FILE,
 )
 
@@ -37,7 +39,7 @@ def enqueue_bash_result(
     claude_session_id: str,
     tool_input: dict,
     tool_response: dict,
-    cwd: str
+    hook_data: dict
 ):
     """Enqueue Bash execution result for async processing.
 
@@ -45,9 +47,15 @@ def enqueue_bash_result(
         claude_session_id: Claude Code session ID
         tool_input: Input parameters (command, description, etc.)
         tool_response: Response from Bash execution (stdout, stderr, interrupted, etc.)
-        cwd: Current working directory
+        hook_data: Full hook data for project extraction
     """
-    project_name = Path(cwd).name if cwd else 'Unknown Project'
+    # Extract project information
+    project_info = get_project_info_from_hook(hook_data)
+
+    # Ensure project exists (non-blocking)
+    if not ensure_project_exists(project_info):
+        log_message("Failed to ensure project exists", "ERROR")
+        # Don't return, continue processing (non-blocking)
 
     # Extract command info
     command = tool_input.get('command', 'N/A')
@@ -90,13 +98,15 @@ def enqueue_bash_result(
         'id': str(uuid.uuid4()),
         'type': 'tool_execution_result',
         'session_id': claude_session_id,
+        'project_id': project_info['project_id'],
         'message': {
             'role': 'assistant',
             'content': truncate_content(full_content)
         },
         'metadata': {
-            'project_name': project_name,
-            'cwd': cwd,
+            'project_name': project_info['project_name'],
+            'project_path': project_info['project_path'],
+            'cwd': hook_data.get('cwd', ''),
             'tool_name': 'Bash',
             'tool_input': tool_input,
             'tool_response': {
@@ -117,7 +127,8 @@ def enqueue_bash_result(
 
     log_message(
         f"Bash execution result queued for async processing (id={message_data['id']}, "
-        f"session={claude_session_id}, exit_code={exit_code})"
+        f"session={claude_session_id}, project={project_info['project_id']}, "
+        f"exit_code={exit_code})"
     )
 
 
@@ -195,7 +206,7 @@ def main():
         log_message(f"Interrupted: {tool_response.get('interrupted', False)}")
 
         # 3. Enqueue bash result (< 10ms)
-        enqueue_bash_result(claude_session_id, tool_input, tool_response, cwd)
+        enqueue_bash_result(claude_session_id, tool_input, tool_response, hook_data)
 
         # 4. Launch background processor (< 50ms)
         launch_background_processor()

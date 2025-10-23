@@ -553,3 +553,158 @@ def release_lock(lock_file: Path):
             log_message(f"Released lock: {lock_file.name}")
     except Exception as e:
         log_message(f"Failed to release lock: {e}", "WARNING")
+
+
+# ============================================================================
+# Project Information Extraction Functions
+# ============================================================================
+
+def extract_project_id_from_transcript(transcript_path: str) -> str | None:
+    """Extract Claude Code project ID from transcript path.
+
+    Path format: ~/.claude/projects/{project-id}/{session-id}.jsonl
+
+    Args:
+        transcript_path: Path to the transcript file
+
+    Returns:
+        Project ID extracted from path, or None if extraction failed
+
+    Example:
+        >>> extract_project_id_from_transcript('~/.claude/projects/my-proj/sess-123.jsonl')
+        'my-proj'
+    """
+    try:
+        path = Path(transcript_path)
+        parts = path.parts
+        projects_idx = parts.index('projects')
+        return parts[projects_idx + 1]
+    except (ValueError, IndexError):
+        return None
+
+
+def _is_reasonable_project_id(project_id: str) -> bool:
+    """Determine if a project_id is reasonable (not old path-based format).
+
+    Args:
+        project_id: The project_id to check
+
+    Returns:
+        True if the project_id looks reasonable, False if it looks like an old path format
+
+    Examples:
+        >>> _is_reasonable_project_id("claude_note-7f3a2b1c")
+        True
+        >>> _is_reasonable_project_id("-Users-xyn-X---project-claude-claude-note-claude-note")
+        False
+        >>> _is_reasonable_project_id("my-project")
+        True
+    """
+    if not project_id:
+        return False
+
+    # Exclude obvious path formats (starts with '-' or contains too many '-')
+    if project_id.startswith('-') or project_id.count('-') > 5:
+        return False
+
+    # Exclude overly long IDs (likely path conversions)
+    if len(project_id) > 80:
+        return False
+
+    # Keep special legacy values
+    if project_id == 'unknown-legacy-project':
+        return True
+
+    return True
+
+
+def get_project_info_from_hook(hook_data: dict) -> dict:
+    """Extract project information from hook data.
+
+    Generates project_id in format: {project_name}-{hash8}
+    For example: claude_note-7f3a2b1c
+
+    Tries multiple methods to determine project identity:
+    1. Extract from transcript_path (if reasonable format, use it)
+    2. Generate new format: {project_name}-{path_hash[:8]}
+
+    Args:
+        hook_data: Hook payload dictionary containing cwd, transcript_path, etc.
+
+    Returns:
+        Dictionary with project_id, project_name, project_path, and source
+
+    Example:
+        >>> get_project_info_from_hook({
+        ...     'cwd': '/Users/tj/my-project',
+        ...     'transcript_path': '~/.claude/projects/my-project-7f3a2b1c/sess.jsonl'
+        ... })
+        {
+            'project_id': 'my-project-7f3a2b1c',
+            'project_name': 'my-project',
+            'project_path': '/Users/tj/my-project',
+            'source': 'transcript'
+        }
+    """
+    import hashlib
+    import re
+
+    cwd = hook_data.get('cwd', '')
+    transcript_path = hook_data.get('transcript_path', '')
+
+    # Try to get cwd_path early for project name extraction
+    cwd_path = Path(cwd).resolve() if cwd else None
+    project_name = cwd_path.name if cwd_path else 'unknown'
+
+    # Sanitize project name (remove special characters, limit length)
+    project_name = re.sub(r'[^a-zA-Z0-9_-]', '_', project_name)
+    if len(project_name) > 40:
+        project_name = project_name[:40]
+
+    # Method 1: Try to extract from transcript_path
+    existing_id = extract_project_id_from_transcript(transcript_path)
+    if existing_id and _is_reasonable_project_id(existing_id):
+        # Already a reasonable project_id, keep it
+        source = 'transcript'
+        project_id = existing_id
+    else:
+        # Method 2: Generate new format: {project_name}-{hash[:8]}
+        normalized_path = str(cwd_path) if cwd_path else cwd
+        path_hash = hashlib.sha256(normalized_path.encode()).hexdigest()[:8]
+
+        project_id = f"{project_name}-{path_hash}"
+        source = 'generated'
+
+    return {
+        'project_id': project_id,
+        'project_name': cwd_path.name if cwd_path else 'Unknown',
+        'project_path': str(cwd_path) if cwd_path else cwd,
+        'source': source
+    }
+
+
+def ensure_project_exists(project_info: dict) -> bool:
+    """Ensure project exists in backend, create if not exists.
+
+    Calls POST /api/v1/projects/ensure endpoint.
+
+    Args:
+        project_info: Dictionary with project_id, project_name, project_path, source
+
+    Returns:
+        True if project exists or was created successfully, False otherwise
+
+    Example:
+        >>> project_info = get_project_info_from_hook(hook_data)
+        >>> if ensure_project_exists(project_info):
+        ...     print("Project is ready")
+    """
+    url = f"{API_BASE_URL}/projects/ensure"
+    payload = {
+        'project_id': project_info['project_id'],
+        'name': project_info['project_name'],
+        'path': project_info['project_path'],
+        'metadata': {'source': project_info['source']}
+    }
+    success, _ = call_api_with_retry('POST', url, payload)
+    return success

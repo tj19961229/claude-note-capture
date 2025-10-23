@@ -29,6 +29,8 @@ from shared_utils import (
     truncate_content,
     append_to_queue,
     get_plugin_data_dir,
+    get_project_info_from_hook,
+    ensure_project_exists,
     PENDING_QUEUE_FILE,
 )
 
@@ -37,7 +39,7 @@ def enqueue_tool_call_attempt(
     claude_session_id: str,
     tool_name: str,
     tool_input: dict,
-    cwd: str
+    hook_data: dict
 ):
     """Enqueue tool call attempt for async processing.
 
@@ -45,9 +47,15 @@ def enqueue_tool_call_attempt(
         claude_session_id: Claude Code session ID
         tool_name: Name of the tool being called
         tool_input: Input parameters for the tool
-        cwd: Current working directory
+        hook_data: Full hook data for project extraction
     """
-    project_name = Path(cwd).name if cwd else 'Unknown Project'
+    # Extract project information
+    project_info = get_project_info_from_hook(hook_data)
+
+    # Ensure project exists (non-blocking)
+    if not ensure_project_exists(project_info):
+        log_message("Failed to ensure project exists", "ERROR")
+        # Don't return, continue processing (non-blocking)
 
     # Prepare content: tool name + key parameters
     content_parts = [f"🔧 Tool Call Attempt: {tool_name}"]
@@ -82,13 +90,15 @@ def enqueue_tool_call_attempt(
         'id': str(uuid.uuid4()),
         'type': 'tool_call_attempt',
         'session_id': claude_session_id,
+        'project_id': project_info['project_id'],
         'message': {
             'role': 'assistant',  # Tool calls are initiated by assistant
             'content': truncate_content(full_content)
         },
         'metadata': {
-            'project_name': project_name,
-            'cwd': cwd,
+            'project_name': project_info['project_name'],
+            'project_path': project_info['project_path'],
+            'cwd': hook_data.get('cwd', ''),
             'tool_name': tool_name,
             'tool_input': tool_input,  # Store full tool input in metadata
             'tool_call_status': 'attempted',  # Status: attempted (not yet executed)
@@ -103,7 +113,8 @@ def enqueue_tool_call_attempt(
 
     log_message(
         f"Tool call attempt queued for async processing (id={message_data['id']}, "
-        f"session={claude_session_id}, tool={tool_name})"
+        f"session={claude_session_id}, project={project_info['project_id']}, "
+        f"tool={tool_name})"
     )
 
 
@@ -175,7 +186,7 @@ def main():
         log_message(f"Working directory: {cwd}")
 
         # 3. Enqueue tool call attempt (< 10ms)
-        enqueue_tool_call_attempt(claude_session_id, tool_name, tool_input, cwd)
+        enqueue_tool_call_attempt(claude_session_id, tool_name, tool_input, hook_data)
 
         # 4. Launch background processor (< 50ms)
         launch_background_processor()
