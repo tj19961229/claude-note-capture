@@ -17,6 +17,7 @@ The background processor handles actual API calls asynchronously.
 """
 
 import sys
+import os
 import json
 import uuid
 import subprocess
@@ -26,6 +27,7 @@ from shared_utils import (
     log_message,
     truncate_content,
     append_to_queue,
+    get_plugin_data_dir,
     PENDING_QUEUE_FILE,
 )
 
