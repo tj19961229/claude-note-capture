@@ -154,14 +154,23 @@ def main():
         log_message("Successfully parsed hook data as JSON")
 
         # 2. Extract hook data
-        claude_session_id = hook_data.get('session_id')
+        # FIX: Extract session_id from transcript_path (consistent with session_start.py)
+        transcript_path = hook_data.get('transcript_path', '')
+
+        if transcript_path:
+            claude_session_id = Path(transcript_path).stem
+            log_message(f"Session ID extracted from transcript_path: {claude_session_id}")
+        else:
+            claude_session_id = hook_data.get('session_id')
+            log_message(f"Session ID from hook_data (transcript_path not available): {claude_session_id}", "WARNING")
+
         tool_name = hook_data.get('tool_name', 'unknown')
         tool_input = hook_data.get('tool_input', {})
         tool_response = hook_data.get('tool_response', {})  # ✅ Fixed: tool_response not tool_output
         cwd = hook_data.get('cwd', '')
 
         if not claude_session_id:
-            log_message("Missing session_id in hook data, skipping", "WARNING")
+            log_message("Missing session_id (no transcript_path and no hook_data.session_id), skipping", "WARNING")
             return  # Don't block operation
 
         if tool_name != 'Bash':

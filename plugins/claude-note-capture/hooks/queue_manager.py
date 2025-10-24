@@ -154,7 +154,7 @@ def create_session_fallback(session_id: str, metadata: Dict[str, Any]) -> bool:
     return create_success
 
 
-def process_message(msg_data: Dict[str, Any]) -> bool:
+def process_message(msg_data: Dict[str, Any]) -> tuple[bool, bool]:
     """Process a single message from the queue using optimistic execution.
 
     Optimistically tries to save the message first. If it fails with 404 (session
@@ -165,7 +165,9 @@ def process_message(msg_data: Dict[str, Any]) -> bool:
         msg_data: Message data from queue
 
     Returns:
-        True if message was processed successfully
+        Tuple of (success: bool, is_permanent_failure: bool)
+        - success: True if message was processed successfully
+        - is_permanent_failure: True if failure is permanent (should move to failed queue immediately)
     """
     msg_id = msg_data.get('id', 'unknown')
     msg_type = msg_data.get('type')
@@ -181,7 +183,7 @@ def process_message(msg_data: Dict[str, Any]) -> bool:
     if success:
         # Success on first try - the common case!
         log_message(f"✅ Successfully processed message {msg_id}")
-        return True
+        return True, False
 
     # Failed - check if it's because session doesn't exist
     if status_code == 404:
@@ -189,8 +191,14 @@ def process_message(msg_data: Dict[str, Any]) -> bool:
 
         # Create session as fallback
         if not create_session_fallback(session_id, metadata):
-            log_message(f"Failed to create session fallback, will retry later", "WARNING")
-            return False
+            log_message(
+                f"Failed to create session fallback for {session_id}, "
+                "marking as permanent failure (session cannot be recreated)",
+                "ERROR"
+            )
+            # IMPROVEMENT: Return permanent failure to avoid infinite retries
+            # If we can't create the session, retrying won't help
+            return False, True
 
         # Retry saving the message
         log_message(f"Retrying message save after session creation")
@@ -198,17 +206,17 @@ def process_message(msg_data: Dict[str, Any]) -> bool:
 
         if success:
             log_message(f"✅ Successfully processed message {msg_id} (after fallback)")
-            return True
+            return True, False
         else:
             log_message(
                 f"Failed to save message even after session creation (status={status_code})",
                 "WARNING"
             )
-            return False
+            return False, False
     else:
         # Failed for other reasons (not 404)
         log_message(f"Failed to save message (status={status_code}), will retry later", "WARNING")
-        return False
+        return False, False
 
 
 def process_queue():
@@ -235,6 +243,27 @@ def process_queue():
 
         log_message(f"Processing message {msg_id} (retry_count={retry_count})")
 
+        # IMPROVEMENT: Check retry limit BEFORE processing to avoid wasting API calls
+        if retry_count >= MAX_RETRY_COUNT:
+            log_message(
+                f"Message {msg_id} already exceeded max retries ({MAX_RETRY_COUNT}), "
+                "moving to failed queue without processing",
+                "ERROR"
+            )
+            move_message(
+                PENDING_QUEUE_FILE,
+                FAILED_QUEUE_FILE,
+                msg_id,
+                {
+                    'status': 'failed',
+                    'retry_count': retry_count,
+                    'failed_at': datetime.utcnow().isoformat(),
+                    'reason': 'max_retries_exceeded'
+                }
+            )
+            moved_to_failed += 1
+            continue
+
         # Move to processing queue
         move_message(
             PENDING_QUEUE_FILE,
@@ -247,7 +276,7 @@ def process_queue():
         )
 
         # Process the message
-        success = process_message(msg_data)
+        success, is_permanent_failure = process_message(msg_data)
 
         if success:
             # Remove from processing queue (success)
@@ -257,7 +286,26 @@ def process_queue():
             # Processing failed
             retry_count += 1
 
-            if retry_count >= MAX_RETRY_COUNT:
+            # IMPROVEMENT: Handle permanent failures immediately
+            if is_permanent_failure:
+                log_message(
+                    f"Message {msg_id} encountered permanent failure "
+                    "(session cannot be created), moving to failed queue",
+                    "ERROR"
+                )
+                move_message(
+                    PROCESSING_QUEUE_FILE,
+                    FAILED_QUEUE_FILE,
+                    msg_id,
+                    {
+                        'status': 'failed',
+                        'retry_count': retry_count,
+                        'failed_at': datetime.utcnow().isoformat(),
+                        'reason': 'permanent_failure_session_creation_failed'
+                    }
+                )
+                moved_to_failed += 1
+            elif retry_count >= MAX_RETRY_COUNT:
                 # Max retries reached, move to failed queue
                 log_message(
                     f"Message {msg_id} exceeded max retries ({MAX_RETRY_COUNT}), "
@@ -271,7 +319,8 @@ def process_queue():
                     {
                         'status': 'failed',
                         'retry_count': retry_count,
-                        'failed_at': datetime.utcnow().isoformat()
+                        'failed_at': datetime.utcnow().isoformat(),
+                        'reason': 'max_retries_exceeded'
                     }
                 )
                 moved_to_failed += 1

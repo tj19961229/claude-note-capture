@@ -97,12 +97,25 @@ def main():
         log_message("Successfully parsed hook data as JSON")
 
         # 2. Extract hook data
-        session_id = hook_data.get('session_id')
+        # FIX: Extract session_id from transcript_path to handle session resumption
+        # When Claude Code resumes a session after context summary, it:
+        # - Triggers SessionStart with a NEW session_id
+        # - But continues using the OLD transcript file
+        # - So we use transcript filename as the source of truth
         cwd = hook_data.get('cwd', '')
         transcript_path = hook_data.get('transcript_path', '')
 
+        if transcript_path:
+            # Extract session_id from transcript filename (e.g., "abc-123.jsonl" -> "abc-123")
+            session_id = Path(transcript_path).stem
+            log_message(f"Session ID extracted from transcript_path: {session_id}")
+        else:
+            # Fallback to hook_data session_id (should rarely happen)
+            session_id = hook_data.get('session_id')
+            log_message(f"Session ID from hook_data (transcript_path not available): {session_id}", "WARNING")
+
         if not session_id:
-            log_message("Missing session_id in hook data, skipping", "WARNING")
+            log_message("Missing session_id (no transcript_path and no hook_data.session_id), skipping", "WARNING")
             return  # Don't block operation
 
         log_message(f"Session: {session_id}")
